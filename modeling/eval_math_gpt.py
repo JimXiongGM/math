@@ -1,6 +1,5 @@
 
 """
-
 Example:
 
 CUDA_VISIBLE_DEVICES=6 python3 eval_math_gpt.py \
@@ -8,33 +7,20 @@ CUDA_VISIBLE_DEVICES=6 python3 eval_math_gpt.py \
     --math-dataroot=./MATH/test/*/*.json \
     --load=/data/sauravkadavath/maths-beta__modeling__checkpoints/MATH__bbox_only_3_epochs__finetune_6_epochs__pretraining_khan_latex_loss_only__gpt117/checkpoint.pth
 
+python eval_math_gpt.py --arch=gpt2 --math-dataroot=./MATH/test/*/*.json
 """
 
-import io
-import logging
-import math
-import os
 import pprint
-import sys
 import json
-import time
 import transformers
 import numpy as np
 
 from tqdm import tqdm
 
 import torch
-import torch.distributed as dist
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-import torch.multiprocessing as mp
-
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from dataset.MATH import MATHDataset
-from dataset.khan_academy import KhanAcademyMathDataset
-from dataset.util import clean_numbers, last_boxed_only, last_boxed_only_string
+from dataset.util import last_boxed_only_string
 from math_equivalence import is_equiv
 
 def get_level_type(fname):

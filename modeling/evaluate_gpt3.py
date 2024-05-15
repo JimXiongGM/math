@@ -3,40 +3,73 @@ import openai
 import numpy as np
 import operator
 import json
-from dataset.util import clean_numbers, last_boxed_only, last_boxed_only_string
+from dataset.util import last_boxed_only_string
 from math_equivalence import is_equiv
 
-openai.api_key = PUT_KEY_HERE
+os.environ["https_proxy"] = "http://127.0.0.1:7893"
+os.environ["http_proxy"] = "http://127.0.0.1:7893"
 
-def call_engine(train_prompt, problem, engine="davinci"):
+DEFAULT_KEY = os.environ.get("OPENAI_API_KEY", None)
+assert DEFAULT_KEY is not None, "OPENAI_API_KEY is None"
+
+DEFAULT_CHAT_MODEL = "gpt-4-turbo"
+
+client = openai.OpenAI(api_key=DEFAULT_KEY)
+
+
+def call_engine(train_prompt, problem):
     '''
     Given a problem, returns the most likely answer determined by the GPT engine 
     '''
-    test_question = "\n" + problem + "\n" + "Answer: $"
+    test_question = "\n\nQuestion: " + problem.strip() + "\n" + "Let's think step by step:"
     prompt = train_prompt + test_question
     # print(len(prompt))
-    num_tokens = 20
-    c = openai.Completion.create(
-                        engine=engine,
-                        prompt=prompt,
-                        max_tokens=num_tokens,
-                        logprobs=100,
-                        temperature=0,
-                        echo=True
-                    )
-    tokens = c["choices"][0]["logprobs"]["tokens"]
-    startindex = -1 * num_tokens
-    endindex = -1 * num_tokens + 1
-    for token in tokens[startindex + 1:]:
-        if token == "$" or token == "###" or token == "\n":
-            break
-        else:
-            endindex += 1
-    final_answer = ""
-    for i in range(startindex, endindex):
-        all_answers = c["choices"][0]["logprobs"]["top_logprobs"][i]
-        best_answer = max(all_answers.items(), key=operator.itemgetter(1))[0]
-        final_answer += best_answer
+    num_tokens = 1024
+
+    system_content="You are a math problem solver."
+    messages =  [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": prompt},
+        ]
+
+    response = client.chat.completions.create(
+        model=DEFAULT_CHAT_MODEL,
+        messages=messages,
+        temperature=0,
+        top_p=1,
+        n=1,
+        stop=["\n\n"],
+        max_tokens=num_tokens,
+        # presence_penalty=presence_penalty,
+        # frequency_penalty=frequency_penalty,
+        # logit_bias=logit_bias,
+        # **kwargs,
+    )
+    response = json.loads(response.model_dump_json())
+
+    tokens = response["choices"][0]["message"]["content"]
+    # startindex = -1 * num_tokens
+    # endindex = -1 * num_tokens + 1
+    # for token in tokens[startindex + 1:]:
+    #     if token == "$" or token == "###" or token == "\n":
+    #         break
+    #     else:
+    #         endindex += 1
+    # final_answer = ""
+    # for i in range(startindex, endindex):
+    #     all_answers = c["choices"][0]["logprobs"]["top_logprobs"][i]
+    #     best_answer = max(all_answers.items(), key=operator.itemgetter(1))[0]
+    #     final_answer += best_answer
+    # return final_answer
+
+    # parse the output after The answer is
+    start = tokens.find("The answer is")
+    if start == -1:
+        return None
+    start += len("The answer is")
+    final_answer = tokens[start:].strip()
+    if final_answer[-1] == ".":
+        final_answer = final_answer[:-1]
     return final_answer
 
 def remove_boxed(s):
@@ -48,19 +81,14 @@ def remove_boxed(s):
     except:
         return None
 
-train_prompt = "Given a mathematics problem, determine the answer. Simplify your answer as much as possible." + "\n" + "Problem: What is $\left(\\frac{7}{8}\\right)^3 \cdot \left(\\frac{7}{8}\\right)^{-3}$?" + "\n" + "Answer: $1$"
-train_prompt += "\n" + "###" + "\n" + "Problem: In how many ways can 4 books be selected from a shelf of 6 books if the order in which the books are selected does not matter?" + "\n" +"Answer: $15$"
-train_prompt += "\n" +"###" + "\n" + "Problem: Find the distance between the points $(2,1,-4)$ and $(5,8,-3).$" + "\n" + "Answer: $\sqrt{59}$"
-train_prompt += "\n" + "###" + "\n" + "Problem: The faces of an octahedral die are labeled with digits $1$ through $8$. What is the probability, expressed as a common fraction, of rolling a sum of $15$ with a pair of such octahedral dice?" + "\n" + "Answer: $\\frac{1}{32}$"
-train_prompt += "\n" + "###" + "\n" + "Problem: The first three terms of an arithmetic sequence are 1, 10 and 19, respectively. What is the value of the 21st term?" + "\n" + "Answer: $181$"
-train_prompt += "\n" + "###" + "\n" + "Problem: Calculate $6 \\cdot 8\\frac{1}{3}" + "\n" + "Answer: $50$"
-train_prompt += "\n" + "###" + "\n" + "Problem: When the binary number $100101110010_2$ is divided by 4, what is the remainder (give your answer in base 10)?" + "\n" + "Answer: $2$"
-train_prompt += "\n" + "###" + "\n" + "Problem: How many zeros are at the end of the product 25 $\\times$ 240?" + "\n" + "Answer: $3$" + "\n" + "###"
+# with open("modeling/train_prompt.txt", "r") as f:
+with open("modeling/prompt_grad_5.txt", "r") as f:
+    train_prompt = f.read()
 
-rootdir = "../modeling/MATH/data/test"
+rootdir = "MATH/test"
 
 
-def run(engine="davinci", max=-1):
+def run(max=-1):
     outputs = []
     answers = []
     types = []
@@ -74,7 +102,12 @@ def run(engine="davinci", max=-1):
     correct = 0
     total = 0
     for subdir, dirs, files in os.walk(rootdir):
-        for file in files:
+        for idx,file in enumerate(files):
+            
+            # debug
+            if idx == 0:
+                continue
+
             fnames_list.append(os.path.join(subdir, file))
             with open(os.path.join(subdir, file), 'r') as fp:
                 try:
@@ -88,7 +121,7 @@ def run(engine="davinci", max=-1):
                     prob_level = int(prob_level.split("Level ")[1])
                 except:
                     prob_level = None
-                model_output = call_engine(train_prompt, problem_data["problem"], engine=engine)
+                model_output = call_engine(train_prompt, problem_data["problem"])
                 answer = remove_boxed(last_boxed_only_string(problem_data["solution"]))
 
                 levels.append(prob_level)
@@ -131,7 +164,7 @@ def run(engine="davinci", max=-1):
         if max > 0 and total > max:
             break
 
-    with open("outputs_answers_gpt3_{}.txt".format(engine), "w+") as f:
+    with open("outputs_answers_gpt4_turbo.txt", "w+") as f:
         for k, (output, answer, prob_type, prob_level, fname) in enumerate(zip(outputs, answers, types, levels, fnames_list)):
             f.write("{} TYPE: {} | LEVEL: {} | OUTPUT: {} | ANSWER: {} | FNAME: {}\n".format(k, prob_type, prob_level, output, answer, fname))
 
@@ -170,10 +203,5 @@ def run(engine="davinci", max=-1):
         f.write("Overall Accuracy = {}/{} = {:.3f}\n".format(correct, total, correct/total))
 
 if __name__ == "__main__":
-    engines = ["davinci", "curie", "babbage", "ada"][::-1]
-    for engine in engines:
-        run(engine)
+    run(max=10)
 
-    # for testing:
-    # for engine in ["ada"]:
-    #     run(engine, max=10)

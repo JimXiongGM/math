@@ -147,6 +147,7 @@ def is_equiv(str1, str2, verbose=False):
         ss2 = _strip_string(str2)
         if verbose:
             print(ss1, ss2)
+        # 有问题，1/根号2 == 根号2/2 但是这里无法判断
         return ss1 == ss2
     except:
         return str1 == str2
